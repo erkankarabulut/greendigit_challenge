@@ -11,7 +11,26 @@ CLIs.
 
 Related sites:
 - [Challenge website](https://gd2.lab.uvalight.net/)
+- [Activate Challenge VRE](https://sobigdata.d4science.org/group/greendigit_pkdd2026_challenge/jupyterhub-at-google-cloud)
 - [GreenDIGIT-project](https://github.com/GreenDIGIT-project)
+
+[![Activate Challenge VRE](https://img.shields.io/badge/Activate%20Challenge%20VRE-Open%20JupyterHub-2ea44f)](https://sobigdata.d4science.org/group/greendigit_pkdd2026_challenge/jupyterhub-at-google-cloud)
+
+## Challenge Description
+
+The challenge provides a public dataset for participants to build and validate
+their solutions. Final evaluation will use a private dataset, corresponding to
+the next months in the same data collection, to assess how well submissions
+generalize beyond the public data.
+
+The data is available both in this GitHub repository and in the Challenge VRE
+folders. Both locations include aggregated granular data. Raw data is available
+only through the VRE because of its size.
+
+The Challenge VRE provides a ready-to-use Jupyter Notebook platform that
+participants can use to conveniently work on the data and their models. It is
+available through the [Activate Challenge VRE](https://sobigdata.d4science.org/group/greendigit_pkdd2026_challenge/jupyterhub-at-google-cloud)
+link, also listed above.
 
 ## Registration
 
@@ -30,6 +49,11 @@ Related sites:
 | Submission deadline | 1st June 2026 |
 | Publish results | 15th June 2026 |
 | Camera-ready deadline | 15th July 2026 |
+
+## Submission Process
+
+The main submission platform is EasyChair. The EasyChair submission button will
+be made available in the last week of the challenge.
 
 *This work is funded from the European Union’s Horizon Europe research and innovation programme through the [GreenDIGIT project](https://greendigit-project.eu/), under the grant agreement No. [101131207](https://cordis.europa.eu/project/id/101131207)*.
 
