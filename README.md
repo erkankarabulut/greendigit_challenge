@@ -18,17 +18,20 @@ Related sites:
 
 ## Challenge Description
 
-The challenge provides a public dataset for participants to build and validate
-their solutions. Final evaluation will use a private dataset, corresponding to
-the next months in the same data collection, to assess how well submissions
-generalize beyond the public data.
+The challenge provides a public dataset for participants to train, develop, and
+validate their solutions. Final evaluation will use a private dataset,
+corresponding to later months in the same data collection, to assess how well
+submissions generalize beyond the public data.
 
 The data is available both in this GitHub repository and in the Challenge VRE
-folders. Both locations include aggregated granular data. Raw data is available
-only through the VRE because of its size.
+folders. Both locations include the aggregated datasets. Raw granular data is
+available only through the VRE because of its larger size, in `.csv` and `.zip`
+formats. If you are not able to find the data, please contact the challenge
+organizers.
 
 The Challenge VRE provides a ready-to-use Jupyter Notebook platform that
-participants can use to conveniently work on the data and their models. It is
+participants can use for dataset exploration, experimentation, and model
+development. It is
 available through the [Activate Challenge VRE](https://sobigdata.d4science.org/group/greendigit_pkdd2026_challenge/jupyterhub-at-google-cloud)
 link, also listed above.
 
