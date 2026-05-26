@@ -8,3 +8,7 @@ uvicorn[standard]>=0.29
 [server]
 fastapi>=0.111
 uvicorn[standard]>=0.29
+
+[tabpfn]
+tabpfn-time-series
+pandas

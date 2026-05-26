@@ -11,6 +11,13 @@ requires-python = ">=3.9"
 license = {text = "MIT"}
 dependencies = [
     "pydantic>=2.0",
+    "scikit-learn>=1.4",
+    "pandas",
+    "tabpfn",
+    "tabpfn-time-series",
+    "aeon",
+    "neuralforecast",
+    "prophet",
 ]
 
 [project.optional-dependencies]

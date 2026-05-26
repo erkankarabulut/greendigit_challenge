@@ -16,6 +16,7 @@ from .evaluation import (
 )
 from .labels import peak_label, peak_threshold, valid_signal_label
 from .models.baseline import BaselineForecaster
+from .models.my_model import MyModel
 from .schemas import DetectionRow, PeakRow, parse_timestamp
 from .submission import (
     validate_detection_csv,
@@ -84,6 +85,53 @@ def cmd_predict_peaks(args: argparse.Namespace) -> None:
         threshold = max(1e-9, thresholds.get(row.series_id, 1e-9))
         score = min(1.0, max(row.energy_wh, row.cfp_g) / threshold)
         predictions.append(PeakRow(row.series_id, row.bucket_15m, score, peak_label(row, thresholds)))
+    write_peaks(predictions, args.output)
+    print(f"wrote {len(predictions)} peak rows to {args.output}")
+
+
+
+def cmd_train_model(args: argparse.Namespace) -> None:
+    rows = load_series_csv(args.input)
+    train, _ = split_temporal(rows, args.cutoff)
+    model = MyModel.fit(
+        train,
+        clf_backend=args.clf_backend,
+        tabpfn_mode=args.tabpfn_mode,
+        forecast_backend=args.forecast_backend,
+    )
+    model.save(args.model)
+    print(f"trained MyModel (clf={args.clf_backend}, forecast={args.forecast_backend}) on {len(train)} rows → {args.model}")
+
+
+def cmd_predict_model(args: argparse.Namespace) -> None:
+    rows = load_series_csv(args.input)
+    series_ids = sorted({row.series_id for row in rows})
+    origins = sorted({
+        row.bucket_15m for row in rows
+        if row.bucket_15m > parse_timestamp(args.cutoff)
+    })
+    model = MyModel.load(args.model)
+    predictions = model.predict_forecasts(
+        series_ids, origins, tuple(args.horizons), args.tabpfn_mode, args.max_context_length
+    )
+    write_forecasts(predictions, args.output)
+    print(f"wrote {len(predictions)} forecasts to {args.output}")
+
+
+def cmd_predict_detection_model(args: argparse.Namespace) -> None:
+    rows = load_series_csv(args.input)
+    _, test = split_temporal(rows, args.cutoff)
+    model = MyModel.load(args.model)
+    predictions = model.predict_detection(test)
+    write_detections(predictions, args.output)
+    print(f"wrote {len(predictions)} detection rows to {args.output}")
+
+
+def cmd_predict_peaks_model(args: argparse.Namespace) -> None:
+    rows = load_series_csv(args.input)
+    _, test = split_temporal(rows, args.cutoff)
+    model = MyModel.load(args.model)
+    predictions = model.predict_peaks(test)
     write_peaks(predictions, args.output)
     print(f"wrote {len(predictions)} peak rows to {args.output}")
 
@@ -163,6 +211,54 @@ def build_parser() -> argparse.ArgumentParser:
     peaks.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "peak_submission.csv")
     peaks.add_argument("--peak-quantile", type=float, default=0.95)
     peaks.set_defaults(func=cmd_predict_peaks)
+
+    train_model = sub.add_parser("train-model")
+    train_model.add_argument("--input", type=Path, default=default_data_path())
+    train_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
+    train_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
+    train_model.add_argument(
+        "--clf-backend", default="tabpfn",
+        choices=["rf", "tabpfn", "tabpfn-ts", "rocket"],
+        help=(
+            "rf: RandomForest + manual/rolling features. "
+            "tabpfn: TabPFNClassifier, full training table as context. "
+            "tabpfn-ts: TabPFN-TS treating binary labels as a time series."
+        ),
+    )
+    train_model.add_argument("--tabpfn-mode", default="LOCAL", choices=["CLIENT", "LOCAL"])
+    train_model.add_argument(
+        "--forecast-backend", default="tabpfn-ts",
+        choices=["tabpfn-ts", "nhits", "prophet"],
+        help="Forecasting backend for Task A: tabpfn-ts (default), nhits, or prophet.",
+    )
+    train_model.set_defaults(func=cmd_train_model)
+
+    predict_model = sub.add_parser("predict-model")
+    predict_model.add_argument("--input", type=Path, default=default_data_path())
+    predict_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
+    predict_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
+    predict_model.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "forecast_submission.csv")
+    predict_model.add_argument("--horizons", type=int, nargs="+", default=[4, 96])
+    predict_model.add_argument("--tabpfn-mode", default="LOCAL", choices=["CLIENT", "LOCAL"])
+    predict_model.add_argument(
+        "--max-context-length", type=int, default=None,
+        help="History rows per series passed to TabPFN. None = full history (GPU). Set ≤1000 on CPU."
+    )
+    predict_model.set_defaults(func=cmd_predict_model)
+
+    predict_detection_model = sub.add_parser("predict-detection-model")
+    predict_detection_model.add_argument("--input", type=Path, default=default_data_path())
+    predict_detection_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
+    predict_detection_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
+    predict_detection_model.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "detection_submission.csv")
+    predict_detection_model.set_defaults(func=cmd_predict_detection_model)
+
+    predict_peaks_model = sub.add_parser("predict-peaks-model")
+    predict_peaks_model.add_argument("--input", type=Path, default=default_data_path())
+    predict_peaks_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
+    predict_peaks_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
+    predict_peaks_model.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "peak_submission.csv")
+    predict_peaks_model.set_defaults(func=cmd_predict_peaks_model)
 
     evaluate = sub.add_parser("evaluate")
     evaluate.add_argument("--input", type=Path, default=default_data_path())
