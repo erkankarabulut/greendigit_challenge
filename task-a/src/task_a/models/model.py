@@ -111,7 +111,7 @@ def _build_sorted_histories(
 # ---------------------------------------------------------------------------
 
 def _base_features(row: SeriesRow, series_stats: dict) -> list[float]:
-    # 13 features
+    # 8 features
     stats = series_stats.get(row.series_id, {
         "mean_energy": 0.0, "std_energy": 1.0,
         "mean_cfp": 0.0, "std_cfp": 1.0,
@@ -121,9 +121,6 @@ def _base_features(row: SeriesRow, series_stats: dict) -> list[float]:
     return [
         row.energy_wh, row.cfp_g, float(row.records),
         z_energy, z_cfp,
-        float(row.bucket_15m.hour), float(row.bucket_15m.minute),
-        float(row.bucket_15m.weekday()), float(row.bucket_15m.weekday() >= 5),
-        float(row.bucket_15m.month),
         float(row.energy_wh == 0.0), float(row.cfp_g == 0.0),
         float(row.records > 0 and row.energy_wh == 0.0),
     ]
@@ -153,18 +150,6 @@ def _rolling_features(
         else:
             feats.extend([0.0, 0.0, 0.0, 0.0])
     return feats
-
-
-def _cyclic_features(row: SeriesRow) -> list[float]:
-    # 4 features — sin/cos encoding of hour and weekday
-    h = row.bucket_15m.hour + row.bucket_15m.minute / 60.0
-    dow = float(row.bucket_15m.weekday())
-    return [
-        math.sin(2 * math.pi * h / 24),
-        math.cos(2 * math.pi * h / 24),
-        math.sin(2 * math.pi * dow / 7),
-        math.cos(2 * math.pi * dow / 7),
-    ]
 
 
 def _slot_deviation_features(row: SeriesRow, slot_stats: dict) -> list[float]:
@@ -210,6 +195,9 @@ def _rolling_pct_features(
     return [e_pct, c_pct, row.energy_wh / (energies[-1] + 1e-9), row.cfp_g / (cfps[-1] + 1e-9)]
 
 
+_FEATURE_GROUPS = frozenset({"base", "rolling", "slot", "cross", "extremity"})
+
+
 def _all_features(
     row: SeriesRow,
     series_stats: dict,
@@ -217,21 +205,25 @@ def _all_features(
     slot_stats: dict,
     cross_sums: dict,
     zero_streaks: dict,
+    disabled: frozenset = frozenset(),
 ) -> list[float]:
-    # 42 features total
     sh = sorted_histories.get(row.series_id, [])
     iso_ts = row.bucket_15m.isoformat()
-    return (
-        _base_features(row, series_stats)                          # 13
-        + _rolling_features(row, sh)                               # 12
-        + _cyclic_features(row)                                    # 4
-        + _slot_deviation_features(row, slot_stats)                # 2
-        + _cross_series_features(row, cross_sums)                  # 4
-        + [float(zero_streaks.get((row.series_id, iso_ts), 0))]    # 1  consecutive-zero streak
-        + [row.energy_wh / (row.records + 1)]                      # 1  energy-per-record
-        + _rolling_pct_features(row, sh)                           # 4  rank & dist-to-max
-        + [row.energy_wh * row.cfp_g]                              # 1  joint-peak indicator
-    )
+    result: list[float] = []
+    if "base" not in disabled:
+        result += _base_features(row, series_stats)                     # 8
+    if "rolling" not in disabled:
+        result += _rolling_features(row, sh)                            # 12
+    if "slot" not in disabled:
+        result += _slot_deviation_features(row, slot_stats)             # 2
+    if "cross" not in disabled:
+        result += _cross_series_features(row, cross_sums)               # 4
+    if "extremity" not in disabled:
+        result += [float(zero_streaks.get((row.series_id, iso_ts), 0))] # 1
+        result += [row.energy_wh / (row.records + 1)]                   # 1
+        result += _rolling_pct_features(row, sh)                        # 4
+        result += [row.energy_wh * row.cfp_g]                           # 1
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +260,8 @@ def _tabpfn_ts_classify(
     context_labels: dict[str, dict[str, int]],
     test: list[SeriesRow],
     tabpfn_mode: str,
+    max_context_length: int | None = None,
+    threshold: float = 0.5,
 ) -> tuple[list[float], list[int]]:
     import pandas as pd
     from tabpfn_time_series import TabPFNTSPipeline, TabPFNMode
@@ -275,11 +269,13 @@ def _tabpfn_ts_classify(
     mode = TabPFNMode.LOCAL if tabpfn_mode.upper() == "LOCAL" else TabPFNMode.CLIENT
     pipeline = TabPFNTSPipeline(tabpfn_mode=mode)
 
-    context_rows = [
-        {"item_id": sid, "timestamp": _naive_ts(parse_timestamp(iso_ts)), "target": float(label)}
-        for sid, ts_labels in context_labels.items()
-        for iso_ts, label in sorted(ts_labels.items())
-    ]
+    context_rows = []
+    for sid, ts_labels in context_labels.items():
+        items = sorted(ts_labels.items())
+        if max_context_length is not None:
+            items = items[-max_context_length:]
+        for iso_ts, label in items:
+            context_rows.append({"item_id": sid, "timestamp": _naive_ts(parse_timestamp(iso_ts)), "target": float(label)})
     future_rows = [{"item_id": r.series_id, "timestamp": _naive_ts(r.bucket_15m)} for r in test]
 
     pred_df = pipeline.predict_df(
@@ -299,7 +295,85 @@ def _tabpfn_ts_classify(
         raw = lookup.get((r.series_id, r.bucket_15m.isoformat()), 0.5)
         score = max(0.0, min(1.0, raw))
         scores.append(score)
-        preds.append(int(score >= 0.5))
+        preds.append(int(score >= threshold))
+    return scores, preds
+
+
+def _tabpfn_ts_classify_with_features(
+    context_labels: dict[str, dict[str, int]],
+    test: list[SeriesRow],
+    tabpfn_mode: str,
+    series_data: dict[str, dict[str, tuple[float, float]]],
+    series_stats: dict,
+    slot_stats: dict,
+    max_context_length: int | None = None,
+    disabled: frozenset = frozenset(),
+    threshold: float = 0.5,
+) -> tuple[list[float], list[int]]:
+    """TabPFN-TS classification with our non-overlapping engineered features injected as covariates."""
+    import pandas as pd
+    from tabpfn_time_series import TabPFNTSPipeline, TabPFNMode
+
+    mode = TabPFNMode.LOCAL if tabpfn_mode.upper() == "LOCAL" else TabPFNMode.CLIENT
+    pipeline = TabPFNTSPipeline(tabpfn_mode=mode)
+
+    sorted_histories = _build_sorted_histories(series_data)
+
+    # Cross-sums for context rows (rebuilt from stored training data)
+    cross_sums_ctx: dict[str, tuple[float, float]] = {}
+    for sid, buckets in series_data.items():
+        for iso_ts, (e, c) in buckets.items():
+            prev_e, prev_c = cross_sums_ctx.get(iso_ts, (0.0, 0.0))
+            cross_sums_ctx[iso_ts] = (prev_e + e, prev_c + c)
+
+    zero_streaks = _build_zero_streaks(series_data, test)
+    cross_sums_test = _build_cross_sums(test)
+
+    context_rows: list[dict] = []
+    for sid, ts_labels in context_labels.items():
+        items = sorted(ts_labels.items())
+        if max_context_length is not None:
+            items = items[-max_context_length:]
+        for iso_ts, label in items:
+            ts = parse_timestamp(iso_ts)
+            e, c = series_data.get(sid, {}).get(iso_ts, (0.0, 0.0))
+            # records not stored in series_data; use 1.0 as neutral default
+            row = SeriesRow(sid, ts, 1.0, e, c)
+            feats = _all_features(row, series_stats, sorted_histories, slot_stats, cross_sums_ctx, zero_streaks, disabled)
+            context_rows.append({
+                "item_id": sid,
+                "timestamp": _naive_ts(ts),
+                "target": float(label),
+                **{f"feat_{i}": v for i, v in enumerate(feats)},
+            })
+
+    future_rows: list[dict] = []
+    for r in test:
+        feats = _all_features(r, series_stats, sorted_histories, slot_stats, cross_sums_test, zero_streaks, disabled)
+        future_rows.append({
+            "item_id": r.series_id,
+            "timestamp": _naive_ts(r.bucket_15m),
+            **{f"feat_{i}": v for i, v in enumerate(feats)},
+        })
+
+    pred_df = pipeline.predict_df(
+        context_df=pd.DataFrame(context_rows),
+        future_df=pd.DataFrame(future_rows),
+        quantiles=[0.5],
+    )
+
+    lookup: dict[tuple[str, str], float] = {}
+    for idx, row in pred_df.iterrows():
+        item_id, ts = idx if isinstance(idx, tuple) else (None, idx)
+        ts_iso = pd.Timestamp(ts).tz_localize("UTC").isoformat()
+        lookup[(str(item_id), ts_iso)] = float(row["target"])
+
+    scores, preds = [], []
+    for r in test:
+        raw = lookup.get((r.series_id, r.bucket_15m.isoformat()), threshold)
+        score = max(0.0, min(1.0, raw))
+        scores.append(score)
+        preds.append(int(score >= threshold))
     return scores, preds
 
 
@@ -494,6 +568,86 @@ def _forecast_prophet(
     return energy_lookup, cfp_lookup
 
 
+def _forecast_tabpfn_ts_feat(
+    series_data: dict[str, dict[str, tuple[float, float]]],
+    series_ids: list[str],
+    forecast_ts_list: list,
+    tabpfn_mode: str,
+    max_context_length: int | None,
+    series_stats: dict,
+    slot_stats: dict,
+) -> tuple[dict, dict]:
+    """TabPFN-TS forecasting with slot-statistics injected as known future covariates.
+
+    Slot statistics (median / MAD for each hour × weekday cell) are the only
+    features computable for future timestamps without knowing the target value,
+    so they are the natural covariates to add here.  Context rows get the same
+    four columns so TabPFN-TS can learn the association between the covariate
+    and the target during the in-context training phase.
+    """
+    import pandas as pd
+    from tabpfn_time_series import TabPFNTSPipeline, TabPFNMode
+
+    mode = TabPFNMode.LOCAL if tabpfn_mode.upper() == "LOCAL" else TabPFNMode.CLIENT
+    pipeline = TabPFNTSPipeline(tabpfn_mode=mode)
+
+    def _slot_cov(ts: Any, sid: str) -> dict:
+        h = ts.hour if hasattr(ts, "hour") else ts.hour
+        dow = ts.dayofweek if hasattr(ts, "dayofweek") else ts.weekday()
+        key = f"{h}_{dow}"
+        s = slot_stats.get(sid, {}).get(key, {"med_e": 0.0, "mad_e": 1e-9, "med_c": 0.0, "mad_c": 1e-9})
+        return {"slot_med_e": s["med_e"], "slot_mad_e": s["mad_e"],
+                "slot_med_c": s["med_c"], "slot_mad_c": s["mad_c"]}
+
+    future_df = pd.DataFrame([
+        {"item_id": sid, "timestamp": _naive_ts(ts), **_slot_cov(_naive_ts(ts), sid)}
+        for sid in series_ids
+        for ts in forecast_ts_list
+    ])
+
+    def _run(context_rows_raw: list[dict]) -> dict:
+        rows = []
+        for r in context_rows_raw:
+            naive_ts = r["ts"]
+            rows.append({"item_id": r["sid"], "timestamp": naive_ts, "target": r["val"],
+                         **_slot_cov(naive_ts, r["sid"])})
+        context_df = pd.DataFrame(rows)
+        pred_df = pipeline.predict_df(
+            context_df=context_df,
+            future_df=future_df.copy(),
+            quantiles=[0.5],
+        )
+        out: dict[tuple[str, str], float] = {}
+        for idx, row in pred_df.iterrows():
+            item_id, ts = idx if isinstance(idx, tuple) else (series_ids[0], idx)
+            ts_iso = pd.Timestamp(ts).tz_localize("UTC").isoformat()
+            out[(str(item_id), ts_iso)] = float(row["target"])
+        return out
+
+    energy_ctx = _context_df(series_data, series_ids, "energy_wh", max_context_length)
+    for r in energy_ctx:
+        r["val"] = math.log1p(r["val"])
+    energy_raw = _run(energy_ctx)
+    energy_lookup = {k: max(0.0, math.expm1(v)) for k, v in energy_raw.items()}
+
+    ratio_ctx: list[dict] = []
+    for sid in series_ids:
+        items = sorted(series_data.get(sid, {}).items())
+        if max_context_length is not None:
+            items = items[-max_context_length:]
+        for iso_ts, (energy, cfp) in items:
+            ratio = min(cfp / max(energy, 1e-9), _MAX_CFP_RATIO)
+            ratio_ctx.append({"sid": sid, "ts": _naive_ts(parse_timestamp(iso_ts)), "val": math.log1p(ratio)})
+    ratio_raw = _run(ratio_ctx)
+
+    cfp_lookup: dict[tuple[str, str], float] = {}
+    for k, ratio_log in ratio_raw.items():
+        ratio_pred = max(0.0, math.expm1(ratio_log))
+        cfp_lookup[k] = ratio_pred * energy_lookup.get(k, 0.0)
+
+    return energy_lookup, cfp_lookup
+
+
 # ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
@@ -505,12 +659,13 @@ class MyModel:
     global_mean_energy: float
     global_mean_cfp: float
     series_stats: dict[str, dict[str, float]]
-    clf_backend: str          # rf | tabpfn | tabpfn-ts | rocket
+    clf_backend: str          # rf | xgb | tabpfn-ts | tabpfn-ts-feat | rocket
     tabpfn_mode: str          # LOCAL | CLIENT
-    forecast_backend: str = "tabpfn-ts"    # tabpfn-ts | nhits | prophet
+    forecast_backend: str = "tabpfn-ts"    # tabpfn-ts | tabpfn-ts-feat | nhits | prophet
     slot_stats: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
     train_detection_labels: dict[str, dict[str, int]] = field(default_factory=dict)
     train_peak_labels: dict[str, dict[str, int]] = field(default_factory=dict)
+    disabled_feature_groups: list[str] = field(default_factory=list)
     detection_clf: Any = field(default=None, repr=False)
     peak_clf: Any = field(default=None, repr=False)
 
@@ -518,22 +673,30 @@ class MyModel:
     def fit(
         cls,
         train: list[SeriesRow],
-        clf_backend: str = "tabpfn",
+        clf_backend: str = "tabpfn-ts",
         tabpfn_mode: str = "LOCAL",
         forecast_backend: str = "tabpfn-ts",
+        disabled_feature_groups: list[str] | None = None,
     ) -> "MyModel":
         """
         clf_backend:
-          "rf"        — RandomForest with 42 engineered features.
-          "tabpfn"    — TabPFNClassifier with 42 engineered features.
-          "tabpfn-ts" — TabPFN-TS treating binary labels as a time series.
-          "rocket"    — ROCKET on raw 24h multivariate time series windows.
+          "rf"             — RandomForest with engineered features.
+          "xgb"            — XGBoost with engineered features.
+          "tabpfn-ts"      — TabPFN-TS out-of-the-box (its own feature engineering).
+          "tabpfn-ts-feat" — TabPFN-TS with our non-overlapping features as covariates.
+          "rocket"         — ROCKET on raw 24h multivariate time series windows.
 
-        forecast_backend (Task A main forecasting):
-          "tabpfn-ts" — TabPFN-TS with log1p + ratio approach.
-          "nhits"     — N-HiTS via neuralforecast (fit at predict time).
-          "prophet"   — Prophet per series (fit at predict time).
+        forecast_backend:
+          "tabpfn-ts"      — TabPFN-TS with log1p + ratio approach.
+          "tabpfn-ts-feat" — TabPFN-TS with slot statistics as known future covariates.
+          "nhits"          — N-HiTS via neuralforecast (fit at predict time).
+          "prophet"        — Prophet per series (fit at predict time).
+
+        disabled_feature_groups:
+          Subset of {"base","rolling","slot","cross","extremity"} to skip.
+          Only affects rf, xgb, and tabpfn-ts-feat clf backends.
         """
+        disabled_feature_groups = disabled_feature_groups or []
         series_data: dict[str, dict[str, tuple[float, float]]] = {}
         for row in train:
             series_data.setdefault(row.series_id, {})[row.bucket_15m.isoformat()] = (
@@ -584,33 +747,37 @@ class MyModel:
                     "Install it with: pip install aeon"
                 ) from exc
             X = _build_rocket_input(train, sorted_histories)
-            detection_clf = RocketClassifier(num_kernels=10_000, random_state=42)
-            peak_clf = RocketClassifier(num_kernels=10_000, random_state=42)
+            detection_clf = RocketClassifier(n_kernels=10_000, random_state=42)
+            peak_clf = RocketClassifier(n_kernels=10_000, random_state=42)
             detection_clf.fit(X, y_det)
             peak_clf.fit(X, y_peak)
 
-        elif clf_backend in ("rf", "tabpfn"):
+        elif clf_backend in ("rf", "xgb"):
+            disabled = frozenset(disabled_feature_groups)
             cross_sums = _build_cross_sums(train)
             zero_streaks = _build_zero_streaks(series_data, [])
-            X = [_all_features(row, series_stats, sorted_histories, slot_stats, cross_sums, zero_streaks)
+            X = [_all_features(row, series_stats, sorted_histories, slot_stats, cross_sums, zero_streaks, disabled)
                  for row in train]
-
-            if clf_backend == "tabpfn":
+            if clf_backend == "xgb":
                 try:
-                    import torch
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
-                try:
-                    from tabpfn import TabPFNClassifier
+                    from xgboost import XGBClassifier
                 except ModuleNotFoundError as exc:
                     raise ModuleNotFoundError(
-                        "The 'tabpfn' package is required for --clf-backend tabpfn. "
-                        "Install it with: pip install tabpfn\n"
-                        "Alternatively use --clf-backend rf or --clf-backend tabpfn-ts."
+                        "The 'xgboost' package is required for --clf-backend xgb. "
+                        "Install it with: pip install xgboost"
                     ) from exc
-                detection_clf = TabPFNClassifier(ignore_pretraining_limits=True, device=device)
-                peak_clf = TabPFNClassifier(ignore_pretraining_limits=True, device=device)
+                detection_clf = XGBClassifier(
+                    n_estimators=200, learning_rate=0.05, max_depth=6,
+                    subsample=0.8, colsample_bytree=0.8,
+                    scale_pos_weight=sum(1 for y in y_det if y == 0) / max(1, sum(y_det)),
+                    eval_metric="logloss", random_state=42, n_jobs=-1,
+                )
+                peak_clf = XGBClassifier(
+                    n_estimators=200, learning_rate=0.05, max_depth=6,
+                    subsample=0.8, colsample_bytree=0.8,
+                    scale_pos_weight=sum(1 for y in y_peak if y == 0) / max(1, sum(y_peak)),
+                    eval_metric="logloss", random_state=42, n_jobs=-1,
+                )
             else:
                 from sklearn.ensemble import RandomForestClassifier
                 detection_clf = RandomForestClassifier(
@@ -619,6 +786,11 @@ class MyModel:
                 peak_clf = RandomForestClassifier(
                     n_estimators=200, class_weight="balanced", random_state=42, n_jobs=-1
                 )
+            from sklearn.dummy import DummyClassifier
+            if len(set(y_det)) < 2:
+                detection_clf = DummyClassifier(strategy="most_frequent")
+            if len(set(y_peak)) < 2:
+                peak_clf = DummyClassifier(strategy="most_frequent")
             detection_clf.fit(X, y_det)
             peak_clf.fit(X, y_peak)
 
@@ -634,6 +806,7 @@ class MyModel:
             slot_stats=slot_stats,
             train_detection_labels=train_detection_labels,
             train_peak_labels=train_peak_labels,
+            disabled_feature_groups=disabled_feature_groups,
             detection_clf=detection_clf,
             peak_clf=peak_clf,
         )
@@ -665,6 +838,12 @@ class MyModel:
             energy_lookup, cfp_lookup = _forecast_prophet(
                 self.series_data, series_ids, forecast_ts_list, max_context_length,
             )
+        elif backend == "tabpfn-ts-feat":
+            energy_lookup, cfp_lookup = _forecast_tabpfn_ts_feat(
+                self.series_data, series_ids, forecast_ts_list,
+                tabpfn_mode or self.tabpfn_mode, max_context_length,
+                self.series_stats, self.slot_stats,
+            )
         else:
             energy_lookup, cfp_lookup = _forecast_tabpfn_ts(
                 self.series_data, series_ids, forecast_ts_list,
@@ -685,18 +864,19 @@ class MyModel:
         return output
 
     # ------------------------------------------------------------------
-    # Shared input builder for rf / tabpfn / rocket
+    # Shared input builder for rf / rocket
     # ------------------------------------------------------------------
 
     def _make_clf_input(self, test: list[SeriesRow]) -> Any:
         sorted_histories = _build_sorted_histories(self.series_data)
         if self.clf_backend == "rocket":
             return _build_rocket_input(test, sorted_histories)
+        disabled = frozenset(self.disabled_feature_groups)
         cross_sums = _build_cross_sums(test)
         zero_streaks = _build_zero_streaks(self.series_data, test)
         return [
             _all_features(row, self.series_stats, sorted_histories,
-                          self.slot_stats, cross_sums, zero_streaks)
+                          self.slot_stats, cross_sums, zero_streaks, disabled)
             for row in test
         ]
 
@@ -704,9 +884,24 @@ class MyModel:
     # A.1 — valid-signal detection
     # ------------------------------------------------------------------
 
-    def predict_detection(self, test: list[SeriesRow]) -> list[DetectionRow]:
+    def predict_detection(
+        self, test: list[SeriesRow], max_context_length: int | None = None
+    ) -> list[DetectionRow]:
+        disabled = frozenset(self.disabled_feature_groups)
+        all_det_labels = [l for s in self.train_detection_labels.values() for l in s.values()]
+        det_threshold = sum(all_det_labels) / max(1, len(all_det_labels))
         if self.clf_backend == "tabpfn-ts":
-            scores, preds = _tabpfn_ts_classify(self.train_detection_labels, test, self.tabpfn_mode)
+            scores, preds = _tabpfn_ts_classify(
+                self.train_detection_labels, test, self.tabpfn_mode, max_context_length, det_threshold
+            )
+            return [DetectionRow(row.series_id, row.bucket_15m, scores[i], preds[i])
+                    for i, row in enumerate(test)]
+        if self.clf_backend == "tabpfn-ts-feat":
+            scores, preds = _tabpfn_ts_classify_with_features(
+                self.train_detection_labels, test, self.tabpfn_mode,
+                self.series_data, self.series_stats, self.slot_stats,
+                max_context_length, disabled, det_threshold,
+            )
             return [DetectionRow(row.series_id, row.bucket_15m, scores[i], preds[i])
                     for i, row in enumerate(test)]
 
@@ -723,9 +918,24 @@ class MyModel:
     # A.2 — peak-event detection
     # ------------------------------------------------------------------
 
-    def predict_peaks(self, test: list[SeriesRow]) -> list[PeakRow]:
+    def predict_peaks(
+        self, test: list[SeriesRow], max_context_length: int | None = None
+    ) -> list[PeakRow]:
+        disabled = frozenset(self.disabled_feature_groups)
+        all_peak_labels = [l for s in self.train_peak_labels.values() for l in s.values()]
+        pk_threshold = sum(all_peak_labels) / max(1, len(all_peak_labels))
         if self.clf_backend == "tabpfn-ts":
-            scores, preds = _tabpfn_ts_classify(self.train_peak_labels, test, self.tabpfn_mode)
+            scores, preds = _tabpfn_ts_classify(
+                self.train_peak_labels, test, self.tabpfn_mode, max_context_length, pk_threshold
+            )
+            return [PeakRow(row.series_id, row.bucket_15m, scores[i], preds[i])
+                    for i, row in enumerate(test)]
+        if self.clf_backend == "tabpfn-ts-feat":
+            scores, preds = _tabpfn_ts_classify_with_features(
+                self.train_peak_labels, test, self.tabpfn_mode,
+                self.series_data, self.series_stats, self.slot_stats,
+                max_context_length, disabled, pk_threshold,
+            )
             return [PeakRow(row.series_id, row.bucket_15m, scores[i], preds[i])
                     for i, row in enumerate(test)]
 
@@ -762,10 +972,11 @@ class MyModel:
                     "slot_stats": self.slot_stats,
                     "train_detection_labels": self.train_detection_labels,
                     "train_peak_labels": self.train_peak_labels,
+                    "disabled_feature_groups": self.disabled_feature_groups,
                 },
                 fh,
             )
-        if self.clf_backend in ("rf", "tabpfn", "rocket"):
+        if self.clf_backend in ("rf", "xgb", "rocket"):
             with path.with_suffix(".pkl").open("wb") as fh:
                 pickle.dump({"detection_clf": self.detection_clf, "peak_clf": self.peak_clf}, fh)
 
@@ -775,7 +986,7 @@ class MyModel:
         with path.open() as fh:
             data = json.load(fh)
         detection_clf = peak_clf = None
-        if data["clf_backend"] in ("rf", "tabpfn", "rocket"):
+        if data["clf_backend"] in ("rf", "xgb", "rocket"):
             with path.with_suffix(".pkl").open("rb") as fh:
                 clfs = pickle.load(fh)
             detection_clf = clfs["detection_clf"]
@@ -795,6 +1006,7 @@ class MyModel:
             slot_stats=data.get("slot_stats", {}),
             train_detection_labels=data.get("train_detection_labels", {}),
             train_peak_labels=data.get("train_peak_labels", {}),
+            disabled_feature_groups=data.get("disabled_feature_groups", []),
             detection_clf=detection_clf,
             peak_clf=peak_clf,
         )

@@ -33,7 +33,11 @@ def main():
     sim_p.add_argument("--forecast-csv",
                        default=str(DATA_DIR / "forecast_baseline.csv"))
     sim_p.add_argument("--objective", default="carbon")
-    sim_p.add_argument("--scheduler", default="greedy_carbon")
+    sim_p.add_argument(
+        "--scheduler", default="greedy_carbon",
+        help="Built-in: fcfs, greedy_carbon, greedy_energy, multi_objective, "
+             "or 'my.module.MyClass' for custom schedulers.",
+    )
     sim_p.add_argument("--output-dir", default="results")
     sim_p.add_argument("--start", default="2025-11-19T23:00:00")
     sim_p.add_argument("--end",   default="2025-11-20T23:00:00")

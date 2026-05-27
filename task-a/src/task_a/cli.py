@@ -16,7 +16,7 @@ from .evaluation import (
 )
 from .labels import peak_label, peak_threshold, valid_signal_label
 from .models.baseline import BaselineForecaster
-from .models.my_model import MyModel
+from .models.model import MyModel
 from .schemas import DetectionRow, PeakRow, parse_timestamp
 from .submission import (
     validate_detection_csv,
@@ -93,14 +93,18 @@ def cmd_predict_peaks(args: argparse.Namespace) -> None:
 def cmd_train_model(args: argparse.Namespace) -> None:
     rows = load_series_csv(args.input)
     train, _ = split_temporal(rows, args.cutoff)
+    disabled = [g.strip() for g in args.disabled_feature_groups.split(",") if g.strip()] \
+        if args.disabled_feature_groups else []
     model = MyModel.fit(
         train,
         clf_backend=args.clf_backend,
         tabpfn_mode=args.tabpfn_mode,
         forecast_backend=args.forecast_backend,
+        disabled_feature_groups=disabled,
     )
     model.save(args.model)
-    print(f"trained MyModel (clf={args.clf_backend}, forecast={args.forecast_backend}) on {len(train)} rows → {args.model}")
+    print(f"trained MyModel (clf={args.clf_backend}, forecast={args.forecast_backend}, "
+          f"disabled={disabled or 'none'}) on {len(train)} rows → {args.model}")
 
 
 def cmd_predict_model(args: argparse.Namespace) -> None:
@@ -122,7 +126,7 @@ def cmd_predict_detection_model(args: argparse.Namespace) -> None:
     rows = load_series_csv(args.input)
     _, test = split_temporal(rows, args.cutoff)
     model = MyModel.load(args.model)
-    predictions = model.predict_detection(test)
+    predictions = model.predict_detection(test, args.max_context_length)
     write_detections(predictions, args.output)
     print(f"wrote {len(predictions)} detection rows to {args.output}")
 
@@ -131,7 +135,7 @@ def cmd_predict_peaks_model(args: argparse.Namespace) -> None:
     rows = load_series_csv(args.input)
     _, test = split_temporal(rows, args.cutoff)
     model = MyModel.load(args.model)
-    predictions = model.predict_peaks(test)
+    predictions = model.predict_peaks(test, args.max_context_length)
     write_peaks(predictions, args.output)
     print(f"wrote {len(predictions)} peak rows to {args.output}")
 
@@ -217,19 +221,35 @@ def build_parser() -> argparse.ArgumentParser:
     train_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
     train_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
     train_model.add_argument(
-        "--clf-backend", default="tabpfn",
-        choices=["rf", "tabpfn", "tabpfn-ts", "rocket"],
+        "--clf-backend", default="tabpfn-ts",
+        choices=["rf", "xgb", "tabpfn-ts", "tabpfn-ts-feat", "rocket"],
         help=(
-            "rf: RandomForest + manual/rolling features. "
-            "tabpfn: TabPFNClassifier, full training table as context. "
-            "tabpfn-ts: TabPFN-TS treating binary labels as a time series."
+            "rf: RandomForest + engineered features. "
+            "xgb: XGBoost + engineered features. "
+            "tabpfn-ts: TabPFN-TS out-of-the-box (default). "
+            "tabpfn-ts-feat: TabPFN-TS with non-overlapping engineered features as covariates. "
+            "rocket: ROCKET on raw 24h multivariate windows."
         ),
     )
     train_model.add_argument("--tabpfn-mode", default="LOCAL", choices=["CLIENT", "LOCAL"])
     train_model.add_argument(
         "--forecast-backend", default="tabpfn-ts",
-        choices=["tabpfn-ts", "nhits", "prophet"],
-        help="Forecasting backend for Task A: tabpfn-ts (default), nhits, or prophet.",
+        choices=["tabpfn-ts", "tabpfn-ts-feat", "nhits", "prophet"],
+        help=(
+            "tabpfn-ts: TabPFN-TS out-of-the-box (default). "
+            "tabpfn-ts-feat: TabPFN-TS with slot statistics as known future covariates. "
+            "nhits: N-HiTS neural forecaster. "
+            "prophet: Facebook Prophet per series."
+        ),
+    )
+    train_model.add_argument(
+        "--disabled-feature-groups", default="",
+        metavar="GROUPS",
+        help=(
+            "Comma-separated feature groups to disable for rf/xgb/tabpfn-ts-feat clf backends. "
+            "Choices: base,rolling,slot,cross,extremity. "
+            "Example: --disabled-feature-groups rolling,cross"
+        ),
     )
     train_model.set_defaults(func=cmd_train_model)
 
@@ -251,6 +271,10 @@ def build_parser() -> argparse.ArgumentParser:
     predict_detection_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
     predict_detection_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
     predict_detection_model.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "detection_submission.csv")
+    predict_detection_model.add_argument(
+        "--max-context-length", type=int, default=None,
+        help="Limit training labels per series passed to TabPFN-TS. None = full history."
+    )
     predict_detection_model.set_defaults(func=cmd_predict_detection_model)
 
     predict_peaks_model = sub.add_parser("predict-peaks-model")
@@ -258,6 +282,10 @@ def build_parser() -> argparse.ArgumentParser:
     predict_peaks_model.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
     predict_peaks_model.add_argument("--model", type=Path, default=DEFAULT_OUTPUTS / "my_model.json")
     predict_peaks_model.add_argument("--output", type=Path, default=DEFAULT_OUTPUTS / "peak_submission.csv")
+    predict_peaks_model.add_argument(
+        "--max-context-length", type=int, default=None,
+        help="Limit training labels per series passed to TabPFN-TS. None = full history."
+    )
     predict_peaks_model.set_defaults(func=cmd_predict_peaks_model)
 
     evaluate = sub.add_parser("evaluate")

@@ -52,6 +52,8 @@ from dirac_sim.core.evaluator import Evaluator
 from dirac_sim.api.forecast_client import ForecastClient
 from dirac_sim.baselines.fcfs import FCFSScheduler
 from dirac_sim.baselines.greedy_carbon import GreedyCarbonScheduler
+from dirac_sim.baselines.greedy_energy import GreedyEnergyScheduler
+from dirac_sim.baselines.multi_objective import MultiObjectiveScheduler
 from examples.test_policy import LowestCarbonTestPolicy
 
 logging.basicConfig(
@@ -68,6 +70,8 @@ def load_scheduler(spec: str):
     builtins = {
         "fcfs": FCFSScheduler,
         "greedy_carbon": GreedyCarbonScheduler,
+        "greedy_energy": GreedyEnergyScheduler,
+        "multi_objective": MultiObjectiveScheduler,
         "test_policy": LowestCarbonTestPolicy,
     }
     if spec in builtins:

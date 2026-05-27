@@ -10,14 +10,19 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 dependencies = [
-    "pydantic>=2.0",
+    "numpy>=2.0",
+    "pandas>=2.0",
     "scikit-learn>=1.4",
-    "pandas",
-    "tabpfn",
-    "tabpfn-time-series",
-    "aeon",
-    "neuralforecast",
-    "prophet",
+    "scipy>=1.10",
+    "statsmodels>=0.14",
+    "torch>=2.1",
+    "tabpfn>=8.0",
+    "tabpfn-time-series>=1.1",
+    "xgboost>=2.0",
+    "aeon>=0.12",
+    "neuralforecast>=2.0",
+    "prophet>=1.1",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
