@@ -21,28 +21,72 @@ https://github.com/GreenDIGIT-project/greendigit-ecml-pkdd-2026-challenge.
 
 ### Reproducibility
 
-This section provides the commands to reproduce our experiments, the default is the best performing method,
-GreenForecast, which is built on top of TabPFN-TS.
+We evaluated TabPFN-TS, TabPFN-TS with engineered features (tabpfn-ts-feat), XGBoost, N-HiTS, and Prophet across all Task A subtasks. XGBoost achieved the best scores for signal and peak detection; tabpfn-ts-feat achieved the best scores for forecasting.
+
+#### Installation
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu121  # GPU build; omit for CPU
+pip install -e ./task-a -e ./task-b
+```
 
 #### Training
 
-Provide the command used to train the model using the provided public training/development data.
-Example:
-python train.py --data path/to/public/training/data --output path/to/model
+The pipeline trains and generates all submission files in one step. Pass the full dataset (train + test rows); `--cutoff` separates training data from the prediction period.
+
+```bash
+python task-a/scripts/run_pipeline.py \
+  --input path/to/data \
+  --cutoff 2026-02-18T14:00:00+00:00 \
+  --clf-backend xgb \
+  --forecast-backend tabpfn-ts-feat
+```
 
 #### Testing / Inference
 
-Provide the command used to run the trained model on a test dataset.
-The testing command must allow the organising team to specify the path to the private test dataset used for final
-evaluation.
-Example:
-python test.py --model path/to/model --test-data path/to/private/test/data --output path/to/predictions
+The same script handles inference. Provide the full dataset path (training rows + private test rows); the `--cutoff` splits them automatically:
+
+```bash
+python task-a/scripts/run_pipeline.py \
+  --input path/to/private/test/data \
+  --cutoff 2026-02-18T14:00:00+00:00 \
+  --clf-backend xgb \
+  --forecast-backend tabpfn-ts-feat
+```
+
+Submission files are written to `task-a/outputs/`:
+- `forecast_submission.csv`
+- `detection_submission.csv`
+- `peak_submission.csv`
+
+**Task B — Scheduling (uses Task A forecasts):**
+```bash
+python task-b/examples/exp_scheduling.py \
+  --jobs data/job_trace.csv \
+  --sites data/site_config.json \
+  --forecast-csv task-a/outputs/forecast_submission.csv \
+  --start 2025-11-19T23:00:00 \
+  --end 2026-03-12T17:00:00 \
+  --output task-b/output/exp_scheduling.csv
+```
+
+Results are written to `task-b/output/exp_scheduling.csv`. Each row is one (scheduler × objective) combination scored against the FCFS baseline. Our primary submission uses the `multi_objective` scheduler; look for rows where `scheduler=multi_objective` for our best results.
+
+For a quick smoke test (first 100 jobs, matches default simulation start):
+```bash
+python task-b/examples/exp_scheduling.py \
+  --jobs data/job_trace.csv \
+  --sites data/site_config.json \
+  --forecast-csv task-a/outputs/forecast_submission.csv \
+  --max-jobs 100 \
+  --output task-b/output/exp_scheduling_test.csv
+```
 
 ---
 
 ## Methods
 
-We run several methods for each task.
+We experiment with several methods for each task.
 
 **Task A — Forecasting energy usage and carbon footprint:**
 - [TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series/) — zero-shot tabular foundation model for time series, used out-of-the-box (`--forecast-backend tabpfn-ts`)
@@ -54,10 +98,10 @@ We run several methods for each task.
 - [TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series/) — treats the binary label sequence as a time series (`--clf-backend tabpfn-ts`)
 - **GreenForecast** (our contribution) — TabPFN-TS with our non-overlapping engineered features (rolling statistics, slot deviation, cross-series load share, zero streaks, extremity signals) injected as covariates (`--clf-backend tabpfn-ts-feat`)
 - [XGBoost](https://dl.acm.org/doi/pdf/10.1145/2939672.2939785) — gradient-boosted trees on the same 33 engineered features (`--clf-backend xgb`)
-- [ROCKET](https://arxiv.org/abs/1910.13051) — random convolutional kernel transform on raw 24 h multivariate windows via [aeon](https://www.aeon-toolkit.org/) (`--clf-backend rocket`)
 
 **Task B — Forecast-Driven Sustainable Job Scheduling:**
-- **FCFS** — First-Come-First-Served, dispatches every ready job immediately to the site with the most available slots; no forecast use (`--scheduler fcfs`)
-- **GreedyCarbon** — dispatches to the lowest-carbon site now, or defers up to 6 h if a ≥15% greener window is available within deadline slack (`--scheduler greedy_carbon`)
-- **GreedyEnergy** — same logic as GreedyCarbon but optimises energy consumption instead of carbon (`--scheduler greedy_energy`)
-- **MultiObjective** — scores every (site, time) candidate in a 6 h lookahead window as a weighted sum of normalised energy, carbon, and dispatch delay; weights are driven by the declared primary objective (`--scheduler multi_objective`)
+- **FCFS** — First-Come-First-Served, dispatches every ready job immediately to the site with the most available slots; no forecast use
+- **GreedyCarbon** — dispatches to the lowest-carbon site now, or defers up to 6 h if a ≥15% greener window is available within deadline slack
+- **GreedyEnergy** — same logic as GreedyCarbon but optimises energy consumption instead of carbon
+- **MultiObjective** *(primary submission)* — scores every (site, time) candidate in a 6 h lookahead window as a weighted sum of normalised energy, carbon, and dispatch delay; weights are driven by the declared primary objective
+- **TemporalCarbon** — scans `site.get_carbon(t)` in 15-min steps over a 6 h window and defers if a slot with ≥15% lower carbon intensity is available within the job's deadline slack

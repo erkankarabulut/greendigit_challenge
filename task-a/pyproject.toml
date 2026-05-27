@@ -19,7 +19,6 @@ dependencies = [
     "tabpfn>=8.0",
     "tabpfn-time-series>=1.1",
     "xgboost>=2.0",
-    "aeon>=0.12",
     "neuralforecast>=2.0",
     "prophet>=1.1",
     "pydantic>=2.0",

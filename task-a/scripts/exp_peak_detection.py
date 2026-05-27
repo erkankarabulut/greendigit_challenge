@@ -3,7 +3,7 @@ Peak detection experiments for Task A.2.
 
 Experiments
 -----------
-1. Backend comparison: tabpfn-ts, tabpfn-ts-feat, xgb, rocket
+1. Backend comparison: tabpfn-ts, tabpfn-ts-feat, xgb
    (context_length=None for all)
 
 2. Context-length sweep: tabpfn-ts and tabpfn-ts-feat
@@ -36,7 +36,7 @@ from task_a.models.model import MyModel
 from task_a.schemas import parse_timestamp
 from task_a.submission import write_peaks
 
-CLF_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat", "xgb", "rocket"]
+CLF_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat", "xgb"]
 CONTEXT_SWEEP_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat"]
 CONTEXT_LENGTHS = [96, 672, 2880, 5760, None]
 ABLATION_BACKEND = "tabpfn-ts"
@@ -202,7 +202,7 @@ def main() -> None:
         print(f"\n[raw-vs-enriched] xgb-{variant}")
         try:
             result = run_clf_config(
-                ABLATION_BACKEND, None, disabled, train, test,
+                "xgb", None, disabled, train, test,
                 args.tabpfn_mode, args.tmp_dir, f"rve_{variant}"
             )
             result.update({

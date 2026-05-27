@@ -28,7 +28,7 @@ from task_a.evaluation import (
     score_forecasts,
     score_peaks,
 )
-from task_a.models.my_model import MyModel
+from task_a.models.model import MyModel
 from task_a.schemas import parse_timestamp
 from task_a.submission import (
     validate_detection_csv,
@@ -46,19 +46,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cutoff", default="2026-02-18T14:00:00+00:00")
     p.add_argument("--output-dir", type=Path, default=ROOT / "task-a" / "outputs")
     p.add_argument(
-        "--clf-backend", default="tabpfn",
-        choices=["rf", "tabpfn", "tabpfn-ts", "rocket"],
+        "--clf-backend", default="tabpfn-ts-feat",
+        choices=["rf", "xgb", "tabpfn-ts", "tabpfn-ts-feat", "rocket"],
         help=(
-            "rf: RandomForest + manual/rolling features. "
-            "tabpfn: TabPFNClassifier, full training table as context. "
-            "tabpfn-ts: TabPFN-TS treating binary labels as a time series."
+            "rf: RandomForest + engineered features. "
+            "xgb: XGBoost + engineered features. "
+            "tabpfn-ts: TabPFN-TS out-of-the-box. "
+            "tabpfn-ts-feat: TabPFN-TS with engineered features as covariates (default). "
+            "rocket: ROCKET on raw 24h multivariate windows."
         ),
     )
     p.add_argument("--tabpfn-mode", default="LOCAL", choices=["CLIENT", "LOCAL"])
     p.add_argument(
-        "--forecast-backend", default="tabpfn-ts",
-        choices=["tabpfn-ts", "nhits", "prophet"],
-        help="Forecasting backend: tabpfn-ts (default), nhits, or prophet.",
+        "--forecast-backend", default="tabpfn-ts-feat",
+        choices=["tabpfn-ts", "tabpfn-ts-feat", "nhits", "prophet"],
+        help="Forecasting backend: tabpfn-ts-feat (default), tabpfn-ts, nhits, or prophet.",
     )
     p.add_argument(
         "--max-context-length", type=int, default=None,

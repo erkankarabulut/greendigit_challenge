@@ -3,7 +3,7 @@ Signal detection experiments for Task A.1.
 
 Experiments
 -----------
-1. Backend comparison: tabpfn-ts, tabpfn-ts-feat, xgb, rocket
+1. Backend comparison: tabpfn-ts, tabpfn-ts-feat, xgb
    (context_length=None for all)
 
 2. Context-length sweep: tabpfn-ts and tabpfn-ts-feat
@@ -36,7 +36,7 @@ from task_a.models.model import MyModel
 from task_a.schemas import parse_timestamp
 from task_a.submission import write_detections
 
-CLF_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat", "xgb", "rocket"]
+CLF_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat", "xgb"]
 CONTEXT_SWEEP_BACKENDS = ["tabpfn-ts", "tabpfn-ts-feat"]
 CONTEXT_LENGTHS = [96, 672, 2880, 5760, None]
 ABLATION_BACKEND = "tabpfn-ts"
@@ -64,14 +64,14 @@ def _write_row(writer, row: dict) -> None:
 
 
 def run_clf_config(
-    clf_backend: str,
-    context_length: int | None,
-    disabled: list[str],
-    train,
-    test,
-    tabpfn_mode: str,
-    tmp_dir: Path,
-    tag: str = "",
+        clf_backend: str,
+        context_length: int | None,
+        disabled: list[str],
+        train,
+        test,
+        tabpfn_mode: str,
+        tmp_dir: Path,
+        tag: str = "",
 ) -> dict:
     t0 = time.time()
     model = MyModel.fit(
@@ -133,7 +133,7 @@ def main() -> None:
         print(f"\n[context-sweep] training {backend} ...")
         t0 = time.time()
         model = MyModel.fit(train, clf_backend=backend, tabpfn_mode=args.tabpfn_mode)
-        print(f"  trained in {time.time()-t0:.1f}s")
+        print(f"  trained in {time.time() - t0:.1f}s")
 
         for ctx in CONTEXT_LENGTHS:
             print(f"  context_length={ctx}")
@@ -202,7 +202,7 @@ def main() -> None:
         print(f"\n[raw-vs-enriched] xgb-{variant}")
         try:
             result = run_clf_config(
-                ABLATION_BACKEND, None, disabled, train, test,
+                "xgb", None, disabled, train, test,
                 args.tabpfn_mode, args.tmp_dir, f"rve_{variant}"
             )
             result.update({

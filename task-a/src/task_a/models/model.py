@@ -749,8 +749,9 @@ class MyModel:
             X = _build_rocket_input(train, sorted_histories)
             detection_clf = RocketClassifier(n_kernels=10_000, random_state=42)
             peak_clf = RocketClassifier(n_kernels=10_000, random_state=42)
-            detection_clf.fit(X, y_det)
-            peak_clf.fit(X, y_peak)
+            import numpy as _np
+            detection_clf.fit(X, _np.array(y_det))
+            peak_clf.fit(X, _np.array(y_peak))
 
         elif clf_backend in ("rf", "xgb"):
             disabled = frozenset(disabled_feature_groups)
