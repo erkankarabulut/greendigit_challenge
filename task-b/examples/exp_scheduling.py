@@ -58,12 +58,13 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--jobs", type=Path, default=DATA_DIR / "job_trace.csv")
     p.add_argument("--sites", type=Path, default=DATA_DIR / "site_config.json")
-    p.add_argument("--forecast-csv", type=Path, default=DATA_DIR / "forecast_baseline.csv")
-    p.add_argument("--start", default="2025-11-19T23:00:00")
+    p.add_argument("--forecast-csv", type=Path,
+                   default=ROOT / "task-a" / "outputs" / "forecast_submission.csv")
+    p.add_argument("--start", default="2026-02-18T14:00:00")
     p.add_argument("--end", default="2026-03-12T17:00:00")
     p.add_argument("--max-jobs", type=int, default=None,
                    help="Limit to first N jobs from the trace (useful for quick tests).")
-    p.add_argument("--filter-jobs-after", default=None,
+    p.add_argument("--filter-jobs-after", default="2026-02-18T14:00:00",
                    help="Only include jobs with arrival_time >= this ISO timestamp. "
                         "Use with --start to avoid pre-simulation backlog.")
     p.add_argument("--output", type=Path, default=ROOT / "task-b" / "output" / "exp_scheduling.csv")

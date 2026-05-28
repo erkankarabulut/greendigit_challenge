@@ -1,0 +1,10 @@
+scheduler,objective,energy_wh_total,cfp_g_total,makespan_total,deadline_rate,delta_energy_norm,delta_carbon_norm,delta_makespan_norm,pareto_score,declaration_score,final_score,elapsed_s
+greedy_carbon,carbon,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+greedy_carbon,energy,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+greedy_carbon,makespan,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+greedy_energy,carbon,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+greedy_energy,energy,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+greedy_energy,makespan,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+multi_objective,carbon,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+multi_objective,energy,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.0
+multi_objective,makespan,304000.0,60800.0,4560.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,2.1

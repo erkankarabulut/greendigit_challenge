@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from dirac_sim.core.job_queue import Job, JobQueue
 from dirac_sim.core.scheduler import (
@@ -76,32 +76,19 @@ class MultiObjectiveScheduler(Scheduler):
         self.lookahead_hours = lookahead_hours
         self.min_deadline_slack_h = min_deadline_slack_h
 
-        # forecast caches: series_id -> list of (ts, energy, carbon) sorted by ts
-        self._forecast: Dict[str, List[Tuple[datetime, float, float]]] = {}
-        # per-series range for normalisation
+        # rolling normalisation ranges, updated from forecast stream
         self._energy_range: Dict[str, Tuple[float, float]] = {}
         self._carbon_range: Dict[str, Tuple[float, float]] = {}
 
     def on_forecast_received(self, bundle: ForecastBundle) -> None:
-        by_series: Dict[str, List[Tuple[datetime, float, float]]] = {}
-
         for rec in bundle.horizon_1h + bundle.horizon_24h:
             sid = rec.get("series_id", "")
-            ts_str = rec.get("forecast_timestamp_utc", "")
-            try:
-                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            except ValueError:
-                continue
             energy = float(rec.get("energy_wh_pred", 0.0))
             carbon = float(rec.get("cfp_g_pred", 0.0))
-            by_series.setdefault(sid, []).append((ts, energy, carbon))
-
-        for sid, entries in by_series.items():
-            self._forecast[sid] = sorted(entries, key=lambda x: x[0])
-            energies = [e for _, e, _ in entries]
-            carbons  = [c for _, _, c in entries]
-            self._energy_range[sid] = (min(energies, default=0.0), max(energies, default=1.0))
-            self._carbon_range[sid] = (min(carbons,  default=0.0), max(carbons,  default=1.0))
+            lo_e, hi_e = self._energy_range.get(sid, (energy, energy))
+            lo_c, hi_c = self._carbon_range.get(sid, (carbon, carbon))
+            self._energy_range[sid] = (min(lo_e, energy), max(hi_e, energy))
+            self._carbon_range[sid] = (min(lo_c, carbon), max(hi_c, carbon))
 
     def schedule(
         self,
@@ -132,7 +119,6 @@ class MultiObjectiveScheduler(Scheduler):
         best_decision: Optional[DispatchDecision] = None
         max_delay_minutes = max_delay.total_seconds() / 60
 
-        # Build candidate timestamps at 15-min resolution within the allowed window
         n_steps = max(1, int(max_delay_minutes / 15))
         for step in range(n_steps):
             candidate_ts = now + step * _TICK
@@ -141,7 +127,8 @@ class MultiObjectiveScheduler(Scheduler):
             delay_fraction = step / max(1, n_steps - 1)
 
             for site in candidates:
-                e_pred, c_pred = self._lookup_forecast(site.site_id, candidate_ts)
+                e_pred = site.get_energy(candidate_ts)
+                c_pred = site.get_carbon(candidate_ts)
                 e_norm = self._normalise(e_pred, self._energy_range.get(site.site_id, (0.0, 1.0)))
                 c_norm = self._normalise(c_pred, self._carbon_range.get(site.site_id, (0.0, 1.0)))
                 score = (self.w_energy * e_norm
@@ -162,17 +149,6 @@ class MultiObjectiveScheduler(Scheduler):
                     )
 
         return best_decision
-
-    def _lookup_forecast(self, sid: str, ts: datetime) -> Tuple[float, float]:
-        entries = self._forecast.get(sid, [])
-        best = None
-        best_delta = timedelta(days=999)
-        for entry_ts, e, c in entries:
-            delta = abs(entry_ts - ts)
-            if delta < best_delta:
-                best_delta = delta
-                best = (e, c)
-        return best if best is not None else (0.0, 0.0)
 
     @staticmethod
     def _normalise(value: float, range_: Tuple[float, float]) -> float:

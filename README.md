@@ -1,12 +1,23 @@
 # GreenForecast: Digital Infrastructure Sustainability Forecasting with Tabular Foundation Models
 
----
-
 This repository contains our source code for the [GreenDIGIT](https://gd2.lab.uvalight.net/) challenge
 at ECML PKDD 2026.
 
-The source code is an addition of our own models and experiments to the original challenge repository:
-https://github.com/GreenDIGIT-project/greendigit-ecml-pkdd-2026-challenge.
+The source code extends the original challenge repository:
+https://github.com/GreenDIGIT-project/greendigit-ecml-pkdd-2026-challenge
+
+---
+
+## Table of Contents
+
+- [Submission INDElab](#submission-indelab)
+  - [Participants](#participants)
+  - [Reproducibility](#reproducibility)
+    - [Installation](#installation)
+    - [Training](#training)
+    - [Testing / Inference](#testing--inference)
+    - [Cluster / HPC Execution (Optional)](#cluster--hpc-execution-optional)
+- [Methods](#methods)
 
 ---
 
@@ -21,87 +32,114 @@ https://github.com/GreenDIGIT-project/greendigit-ecml-pkdd-2026-challenge.
 
 ### Reproducibility
 
-We evaluated TabPFN-TS, TabPFN-TS with engineered features (tabpfn-ts-feat), XGBoost, N-HiTS, and Prophet across all Task A subtasks. XGBoost achieved the best scores for signal and peak detection; tabpfn-ts-feat achieved the best scores for forecasting.
-
 #### Installation
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121  # GPU build; omit for CPU
-pip install -e ./task-a -e ./task-b
+pip install -r requirements.txt
 ```
+
+> **TabPFN-TS requires accepting PriorLabs' terms of service.**
+> On first run the library will prompt you interactively.
+> Alternatively, obtain a token from <https://ux.priorlabs.ai/account> and
+> set it before running: `export TABPFN_TOKEN=<your_token>`
 
 #### Training
 
-The pipeline trains and generates all submission files in one step. Pass the full dataset (train + test rows); `--cutoff` separates training data from the prediction period.
+Train on the provided public data. `--cutoff` separates training rows from
+the prediction period; rows at or before the cutoff are used for training.
+
+**Task A:**
 
 ```bash
 python task-a/scripts/run_pipeline.py \
   --input path/to/data \
   --cutoff 2026-02-18T14:00:00+00:00 \
   --clf-backend xgb \
-  --forecast-backend tabpfn-ts-feat
+  --forecast-backend tabpfn-ts-feat \
+  --output-dir task-a/outputs
 ```
 
 #### Testing / Inference
 
-The same script handles inference. Provide the full dataset path (training rows + private test rows); the `--cutoff` splits them automatically:
+Pass the private test dataset (training rows + private test rows combined);
+`--cutoff` splits them automatically. Submission files are written to
+`--output-dir`.
+
+**Task A:**
 
 ```bash
 python task-a/scripts/run_pipeline.py \
   --input path/to/private/test/data \
   --cutoff 2026-02-18T14:00:00+00:00 \
   --clf-backend xgb \
-  --forecast-backend tabpfn-ts-feat
+  --forecast-backend tabpfn-ts-feat \
+  --output-dir task-a/outputs
 ```
 
-Submission files are written to `task-a/outputs/`:
+Outputs written to `task-a/outputs/`:
 - `forecast_submission.csv`
 - `detection_submission.csv`
 - `peak_submission.csv`
 
-**Task B — Scheduling (uses Task A forecasts):**
+**Task B** (uses the Task A forecast output from the step above):
+
 ```bash
 python task-b/examples/exp_scheduling.py \
   --jobs data/job_trace.csv \
   --sites data/site_config.json \
   --forecast-csv task-a/outputs/forecast_submission.csv \
-  --start 2025-11-19T23:00:00 \
+  --start 2026-02-18T14:00:00 \
   --end 2026-03-12T17:00:00 \
   --output task-b/output/exp_scheduling.csv
 ```
 
-Results are written to `task-b/output/exp_scheduling.csv`. Each row is one (scheduler × objective) combination scored against the FCFS baseline. Our primary submission uses the `multi_objective` scheduler; look for rows where `scheduler=multi_objective` for our best results.
+#### Cluster / HPC Execution (Optional)
 
-For a quick smoke test (first 100 jobs, matches default simulation start):
+For faster execution on a SLURM-managed HPC cluster, two helper scripts are
+provided.
+
+**`setup_environment.sh`** — creates the `greendigit` conda environment with
+all dependencies, including CUDA-enabled PyTorch. Run this once on the cluster:
+
 ```bash
-python task-b/examples/exp_scheduling.py \
-  --jobs data/job_trace.csv \
-  --sites data/site_config.json \
-  --forecast-csv task-a/outputs/forecast_submission.csv \
-  --max-jobs 100 \
-  --output task-b/output/exp_scheduling_test.csv
+sbatch setup_environment.sh
 ```
+
+**`run_experiment.sh`** — submits any experiment script as a SLURM job on a
+GPU node. Pass the Python script path and any of its arguments directly:
+
+```bash
+sbatch run_experiment.sh task-a/scripts/run_pipeline.py \
+  --input path/to/data \
+  --cutoff 2026-02-18T14:00:00+00:00 \
+  --clf-backend xgb \
+  --forecast-backend tabpfn-ts-feat \
+  --output-dir task-a/outputs
+```
+
+Logs are written to `exec_logs/slurm_<script>_<job_id>.out`.
 
 ---
 
 ## Methods
 
-We experiment with several methods for each task.
+### Task A
 
-**Task A — Forecasting energy usage and carbon footprint:**
-- [TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series/) — zero-shot tabular foundation model for time series, used out-of-the-box (`--forecast-backend tabpfn-ts`)
+**Forecasting (energy usage and carbon footprint):**
+- [TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series/) — zero-shot tabular foundation model for time series (`--forecast-backend tabpfn-ts`)
 - **GreenForecast** (our contribution) — TabPFN-TS augmented with slot statistics (median/MAD per hour × weekday) as known future covariates (`--forecast-backend tabpfn-ts-feat`)
 - [Prophet](https://facebook.github.io/prophet/) — additive decomposition model with daily and weekly seasonality (`--forecast-backend prophet`)
-- [N-HiTS](https://arxiv.org/abs/2201.12886) — neural hierarchical interpolation for time series forecasting via [NeuralForecast](https://nixtlaverse.nixtla.io/neuralforecast/) (`--forecast-backend nhits`)
+- [N-HiTS](https://arxiv.org/abs/2201.12886) — neural hierarchical interpolation via [NeuralForecast](https://nixtlaverse.nixtla.io/neuralforecast/) (`--forecast-backend nhits`)
 
-**Task A.1 — Missing/Invalid Signal Detection & Task A.2 — Peak Detection:**
+**A.1 — Missing/Invalid Signal Detection & A.2 — Peak Detection:**
 - [TabPFN-TS](https://github.com/PriorLabs/tabpfn-time-series/) — treats the binary label sequence as a time series (`--clf-backend tabpfn-ts`)
-- **GreenForecast** (our contribution) — TabPFN-TS with our non-overlapping engineered features (rolling statistics, slot deviation, cross-series load share, zero streaks, extremity signals) injected as covariates (`--clf-backend tabpfn-ts-feat`)
-- [XGBoost](https://dl.acm.org/doi/pdf/10.1145/2939672.2939785) — gradient-boosted trees on the same 33 engineered features (`--clf-backend xgb`)
+- **GreenForecast** (our contribution) — TabPFN-TS with engineered features (rolling statistics, slot deviation, cross-series load share, zero streaks, extremity signals) as covariates (`--clf-backend tabpfn-ts-feat`)
+- [XGBoost](https://dl.acm.org/doi/pdf/10.1145/2939672.2939785) — gradient-boosted trees on the same engineered features (`--clf-backend xgb`)
 
-**Task B — Forecast-Driven Sustainable Job Scheduling:**
-- **FCFS** — First-Come-First-Served, dispatches every ready job immediately to the site with the most available slots; no forecast use
-- **GreedyCarbon** — dispatches to the lowest-carbon site now, or defers up to 6 h if a ≥15% greener window is available within deadline slack
-- **GreedyEnergy** — same logic as GreedyCarbon but optimises energy consumption instead of carbon
-- **MultiObjective** *(primary submission)* — scores every (site, time) candidate in a 6 h lookahead window as a weighted sum of normalised energy, carbon, and dispatch delay; weights are driven by the declared primary objective
-- **TemporalCarbon** — scans `site.get_carbon(t)` in 15-min steps over a 6 h window and defers if a slot with ≥15% lower carbon intensity is available within the job's deadline slack
+### Task B
+
+**Forecast-Driven Sustainable Job Scheduling:**
+- **FCFS** — First-Come-First-Served organizer baseline; no forecast use
+- **GreedyCarbon** — organizer baseline; dispatches to the lowest-carbon site, deferring up to 6 h if a ≥15% greener window is available
+- **MultiObjective** *(primary submission)* — scores every (site, time) candidate in a 6 h lookahead window as a weighted sum of normalised energy, carbon, and dispatch delay; weights driven by the declared primary objective
+- **TemporalCarbon** — scans the site model's rolling carbon signal at 15-min steps over a 6 h window and defers if a slot with ≥15% lower carbon intensity is available within the job's deadline slack

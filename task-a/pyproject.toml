@@ -34,6 +34,9 @@ dev = [
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
 ]
+rocket = [
+    "aeon>=0.10",
+]
 
 [project.scripts]
 task-a = "task_a.cli:main"

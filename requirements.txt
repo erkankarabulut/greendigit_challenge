@@ -1,0 +1,5 @@
+# Install PyTorch with the correct CUDA build before running this:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+-e ./task-a
+-e ./task-b
