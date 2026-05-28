@@ -64,9 +64,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--end", default="2026-03-12T17:00:00")
     p.add_argument("--max-jobs", type=int, default=None,
                    help="Limit to first N jobs from the trace (useful for quick tests).")
-    p.add_argument("--filter-jobs-after", default="2026-02-18T14:00:00",
+    p.add_argument("--filter-jobs-after", default=None,
                    help="Only include jobs with arrival_time >= this ISO timestamp. "
-                        "Use with --start to avoid pre-simulation backlog.")
+                        "Defaults to --start when not set.")
     p.add_argument("--output", type=Path, default=ROOT / "task-b" / "output" / "exp_scheduling.csv")
     return p.parse_args()
 
@@ -108,7 +108,7 @@ def main() -> None:
 
     start = _parse_utc(args.start)
     end = _parse_utc(args.end)
-    filter_after = _parse_utc(args.filter_jobs_after) if args.filter_jobs_after else None
+    filter_after = _parse_utc(args.filter_jobs_after) if args.filter_jobs_after else start
 
     sites_cfg = SiteRegistry.from_json(str(args.sites))
     series_ids = [s.site_id for s in sites_cfg.all_sites()]

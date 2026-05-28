@@ -45,10 +45,9 @@ pip install -r requirements.txt
 
 #### Training
 
-Train on the provided public data. `--cutoff` separates training rows from
-the prediction period; rows at or before the cutoff are used for training.
-
-**Task A:**
+**Task A:** The pipeline trains and generates all submission files in a single
+pass — there is no separate model-save step. Pass the full dataset (public
+training rows); `--cutoff` identifies the training rows.
 
 ```bash
 python task-a/scripts/run_pipeline.py \
@@ -59,13 +58,14 @@ python task-a/scripts/run_pipeline.py \
   --output-dir task-a/outputs
 ```
 
+**Task B:** The MultiObjective scheduler is rule-based and requires no
+training step. Proceed directly to Testing / Inference below.
+
 #### Testing / Inference
 
-Pass the private test dataset (training rows + private test rows combined);
-`--cutoff` splits them automatically. Submission files are written to
-`--output-dir`.
-
-**Task A:**
+**Task A:** Pass the private test dataset (training rows + private test rows
+combined); `--cutoff` splits them automatically. The model is retrained and
+all three submission files are written to `--output-dir`.
 
 ```bash
 python task-a/scripts/run_pipeline.py \
@@ -81,17 +81,22 @@ Outputs written to `task-a/outputs/`:
 - `detection_submission.csv`
 - `peak_submission.csv`
 
-**Task B** (uses the Task A forecast output from the step above):
+**Task B** (runs after Task A; uses the forecast output from above):
 
 ```bash
-python task-b/examples/exp_scheduling.py \
-  --jobs data/job_trace.csv \
-  --sites data/site_config.json \
+python task-b/examples/run_simulation.py \
+  --offline \
+  --scheduler multi_objective \
+  --objective energy \
   --forecast-csv task-a/outputs/forecast_submission.csv \
   --start 2026-02-18T14:00:00 \
   --end 2026-03-12T17:00:00 \
-  --output task-b/output/exp_scheduling.csv
+  --jobs data/job_trace.csv \
+  --sites data/site_config.json \
+  --output-dir task-b/results
 ```
+
+Results written to `task-b/results/`: `dispatch_log.csv`, `score_summary.txt`, `score_metrics.json`.
 
 #### Cluster / HPC Execution (Optional)
 
@@ -109,12 +114,25 @@ sbatch setup_environment.sh
 GPU node. Pass the Python script path and any of its arguments directly:
 
 ```bash
+# Task A
 sbatch run_experiment.sh task-a/scripts/run_pipeline.py \
   --input path/to/data \
   --cutoff 2026-02-18T14:00:00+00:00 \
   --clf-backend xgb \
   --forecast-backend tabpfn-ts-feat \
   --output-dir task-a/outputs
+
+# Task B
+sbatch run_experiment.sh task-b/examples/run_simulation.py \
+  --offline \
+  --scheduler multi_objective \
+  --objective energy \
+  --forecast-csv task-a/outputs/forecast_submission.csv \
+  --start 2026-02-18T14:00:00 \
+  --end 2026-03-12T17:00:00 \
+  --jobs data/job_trace.csv \
+  --sites data/site_config.json \
+  --output-dir task-b/results
 ```
 
 Logs are written to `exec_logs/slurm_<script>_<job_id>.out`.

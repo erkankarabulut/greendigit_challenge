@@ -81,9 +81,15 @@ def load_scheduler(spec: str):
     return getattr(module, class_name)
 
 
-def run_once(scheduler, queue_path, sites_path, client, start, end, label):
+def run_once(scheduler, queue_path, sites_path, client, start, end, label,
+             filter_after=None):
     """Run one simulation and return its report."""
     queue = JobQueue.from_csv(queue_path)
+    if filter_after is not None:
+        kept = [j for j in queue.all_jobs() if j.arrival_time >= filter_after]
+        queue = JobQueue()
+        for j in kept:
+            queue.add(j)
     registry = SiteRegistry.from_json(sites_path)
 
     sim = WMSSimulator(
@@ -119,12 +125,16 @@ def main():
     parser.add_argument("--start", default="2025-11-19T23:00:00")
     parser.add_argument("--end",   default="2025-11-20T23:00:00",
                         help="Default: 24h real-data smoke window")
+    parser.add_argument("--filter-jobs-after", default=None,
+                        help="Exclude jobs with arrival_time before this timestamp. "
+                             "Defaults to --start when not set.")
     parser.add_argument("--scheduler", default="greedy_carbon",
                         help="Built-in name or 'my.module.MyClass'")
     args = parser.parse_args()
 
     start = _parse_utc(args.start)
     end = _parse_utc(args.end)
+    filter_after = _parse_utc(args.filter_jobs_after) if args.filter_jobs_after else start
     os.makedirs(args.output_dir, exist_ok=True)
 
     # ------------------------------------------------------------------ #
@@ -150,7 +160,8 @@ def main():
     # Run FCFS baseline                                                    #
     # ------------------------------------------------------------------ #
     baseline_report = run_once(
-        FCFSScheduler(), args.jobs, args.sites, client, start, end, "FCFS"
+        FCFSScheduler(), args.jobs, args.sites, client, start, end, "FCFS",
+        filter_after=filter_after,
     )
     baseline_report.to_csv(f"{args.output_dir}/baseline_execution_report.csv")
 
@@ -162,7 +173,8 @@ def main():
         if args.scheduler != "fcfs" else SchedulerClass()
 
     submission_report = run_once(
-        scheduler, args.jobs, args.sites, client, start, end, args.scheduler
+        scheduler, args.jobs, args.sites, client, start, end, args.scheduler,
+        filter_after=filter_after,
     )
     submission_report.to_csv(f"{args.output_dir}/execution_report.csv")
     submission_report.to_dispatch_csv(
