@@ -77,9 +77,6 @@ packages = [
     ('xgboost',         lambda m: m.__version__),
     ('tabpfn',          lambda m: m.__version__),
     ('tabpfn_time_series', lambda m: m.__version__),
-    ('aeon',            lambda m: m.__version__),
-    ('neuralforecast',  lambda m: m.__version__),
-    ('prophet',         lambda m: m.__version__),
     ('task_a',          lambda m: 'ok'),
     ('dirac_sim',       lambda m: 'ok'),
 ]
